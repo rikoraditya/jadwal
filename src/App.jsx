@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Bell, BellOff, Clock, User, Shield, LogOut,
   Edit3, Search, ChevronLeft, ChevronRight,
@@ -239,7 +239,7 @@ const HOLIDAY_SHIFT_STYLES = {
     badge: 'bg-red-500/30 text-red-200 border-red-500/60'
   },
   S: {
-    color: 'bg-rose-950/90 text-rose-200 border-rose-500/80 hover:bg-rose-900/90 ring-1 ring-rose-500/50 shadow-rose-900/40 shadow-lg',
+    color: 'bg-rose-950/90 text-rose-200 border-rose-500/80 hover:bg-rose-900/90 ring-1 ring-rose-900/90 ring-1 ring-rose-500/50 shadow-rose-900/40 shadow-lg',
     badge: 'bg-rose-500/30 text-rose-200 border-rose-500/60'
   },
   PS: {
@@ -264,36 +264,6 @@ const getDaysInMonth = (year, month) => {
     date.setDate(date.getDate() + 1);
   }
   return days;
-};
-
-// Web Audio API Alarm Suara
-const playHospitalAlarmSound = () => {
-  try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
-    
-    const playTone = (freq, type, startTime, duration) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(freq, ctx.currentTime + startTime);
-      gain.gain.setValueAtTime(0, ctx.currentTime + startTime);
-      gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + startTime + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startTime + duration);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(ctx.currentTime + startTime);
-      osc.stop(ctx.currentTime + startTime + duration);
-    };
-
-    const notes = [659.25, 783.99, 880.00, 987.77, 0, 880.00, 987.77];
-    notes.forEach((freq, idx) => {
-      if (freq > 0) playTone(freq, 'sine', idx * 0.13, 0.2);
-    });
-  } catch (err) {
-    console.warn("Audio Context sound error:", err);
-  }
 };
 
 const shuffleArray = (array, seed) => {
@@ -350,6 +320,10 @@ export default function App() {
   const [activeAlarmModal, setActiveAlarmModal] = useState(null);
   const [liveTime, setLiveTime] = useState(new Date());
 
+  // Ref untuk mengontrol pemutaran audio alarm darurat (looping continuous)
+  const alarmAudioContextRef = useRef(null);
+  const alarmIntervalRef = useRef(null);
+
   // Fungsi Pengecekan Tanggal Merah Khas Inputan User
   const checkHolidayStatus = (dateStr) => {
     if (!dateStr) return { isHoliday: false, label: '' };
@@ -391,6 +365,80 @@ export default function App() {
     }
 
     return base;
+  };
+
+  // WEB AUDIO API: ALARM KERAS & MELENGKING KHAS DARURAT RUMAH SAKIT (LOOPING)
+  const playHospitalAlarmSound = () => {
+    try {
+      stopHospitalAlarmSound(); // Bersihkan audio sebelumnya jika ada
+      
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      
+      const ctx = new AudioContext();
+      alarmAudioContextRef.current = ctx;
+
+      const playEmergencySirenPattern = () => {
+        if (!alarmAudioContextRef.current) return;
+
+        // Gelombang Sawtooth + Square memberikan efek suara melengking tajam khas alarm emergency
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc1.type = 'sawtooth';
+        osc2.type = 'square';
+
+        const now = ctx.currentTime;
+
+        // Modulasi Frekuensi Tinggi Melengking (Siren Code Blue / Emergency)
+        osc1.frequency.setValueAtTime(880, now);
+        osc1.frequency.exponentialRampToValueAtTime(1760, now + 0.25);
+        osc1.frequency.exponentialRampToValueAtTime(880, now + 0.5);
+
+        osc2.frequency.setValueAtTime(1174.66, now);
+        osc2.frequency.exponentialRampToValueAtTime(2349.32, now + 0.25);
+        osc2.frequency.exponentialRampToValueAtTime(1174.66, now + 0.5);
+
+        // Volume Keras
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.linearRampToValueAtTime(0.5, now + 0.25);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.55);
+
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + 0.55);
+        osc2.stop(now + 0.55);
+      };
+
+      // Jalankan siklus pertama & set interval pengulangan terus-menerus (loop)
+      playEmergencySirenPattern();
+      alarmIntervalRef.current = setInterval(playEmergencySirenPattern, 650);
+    } catch (err) {
+      console.warn("Audio Context Alarm Error:", err);
+    }
+  };
+
+  const stopHospitalAlarmSound = () => {
+    if (alarmIntervalRef.current) {
+      clearInterval(alarmIntervalRef.current);
+      alarmIntervalRef.current = null;
+    }
+    if (alarmAudioContextRef.current) {
+      try {
+        alarmAudioContextRef.current.close();
+      } catch (e) {}
+      alarmAudioContextRef.current = null;
+    }
+  };
+
+  const closeAlarmModal = () => {
+    stopHospitalAlarmSound();
+    setActiveAlarmModal(null);
   };
 
   useEffect(() => {
@@ -565,12 +613,13 @@ export default function App() {
       } else {
         setCurrentUser({ ...selectedStaff, role: 'employee' });
       }
-   } finally {
+    } finally {
       setIsLoggingIn(false);
     }
   };
 
   const handleLogout = () => {
+    stopHospitalAlarmSound();
     setCurrentUser(null);
     setInputPassword('');
     setIsLogoutModalOpen(false);
@@ -596,10 +645,9 @@ export default function App() {
   };
 
   const handleTestAlarm = () => {
-    playHospitalAlarmSound();
-    setActiveAlarmModal({
-      title: 'Tes Nada Dering Alarm Shift',
-      message: `Sistem alarm aktif! Anda akan menerima peringatan 30 menit sebelum shift dimulai.`,
+    triggerAlarmModal({
+      title: 'Tes Alarm Darurat Shift',
+      message: `Alarm melengking terus-menerus diaktifkan! Anda akan menerima peringatan suara berulang ini 30 menit sebelum shift dimulai.`,
       shiftCode: 'P',
       staffName: currentUser ? currentUser.name : 'Staf Rekam Medis'
     });
@@ -1406,20 +1454,30 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL ALARM SHIFT */}
+      {/* MODAL ALARM SHIFT (DARURAT & CONTINUOUS LOOPING) */}
       {activeAlarmModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl max-w-sm w-full p-6 shadow-2xl shadow-amber-500/20 text-center">
+          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl max-w-sm w-full p-6 shadow-2xl shadow-amber-500/20 text-center relative overflow-hidden">
+            
+            <button 
+              onClick={closeAlarmModal}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-xl bg-slate-800/50 transition"
+              title="Tutup"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
             <div className="w-16 h-16 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-bounce">
-              <Bell className="w-8 h-8 text-amber-400" />
+              <Bell className="w-8 h-8 text-amber-400 animate-pulse" />
             </div>
             <h3 className="text-xl font-bold text-white mb-2">{activeAlarmModal.title}</h3>
             <p className="text-xs sm:text-sm text-slate-300 mb-6 leading-relaxed">{activeAlarmModal.message}</p>
+            
             <button
-              onClick={() => setActiveAlarmModal(null)}
-              className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3.5 rounded-xl transition shadow-lg text-sm"
+              onClick={closeAlarmModal}
+              className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-3.5 rounded-xl transition shadow-lg text-sm flex items-center justify-center gap-2"
             >
-              Matikan Alarm
+              <BellOff className="w-4 h-4" /> Matikan Alarm
             </button>
           </div>
         </div>
