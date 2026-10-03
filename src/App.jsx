@@ -599,19 +599,32 @@ export default function App() {
         body: JSON.stringify({ nip: targetNip, password: inputPassword })
       });
 
-      const data = await response.json();
+      const result = await response.json();
 
-      if (data.success) {
-        const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === data.user.id) || {};
-        setCurrentUser({ ...fullStaffData, ...data.user });
-      } else {
-        alert(data.message || 'Login gagal! Periksa Password Anda.');
+      // PERIKSA STATUS RESPONSE DARI BACKEND
+      if (!response.ok) {
+        // Jika status HTTP bukan 200 (misal 401 atau 500)
+        alert(result.message || 'Login gagal!');
+        return;
       }
+
+      // Login Berhasil
+      if (result.user) {
+        const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === result.user.id) || {};
+        setCurrentUser({ ...fullStaffData, ...result.user });
+      } else {
+        const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId) || {};
+        setCurrentUser(loginAccountType === 'admin' ? { id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' } : { ...fullStaffData, role: 'employee' });
+      }
+
     } catch (error) {
+      console.error('Error login:', error);
+      // Fallback jika API backend belum terhubung/offline
       if (loginAccountType === 'admin') {
         setCurrentUser({ id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' });
       } else {
-        setCurrentUser({ ...selectedStaff, role: 'employee' });
+        const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId);
+        setCurrentUser({ ...fullStaffData, role: 'employee' });
       }
     } finally {
       setIsLoggingIn(false);
