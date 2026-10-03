@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 
 // URL API Backend Express SQL
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = '/api';
 
 // =========================================================================
 // DATABASE HARI RAYA & TANGGAL MERAH RESMI (HANYA DARI DAFTAR USER)
