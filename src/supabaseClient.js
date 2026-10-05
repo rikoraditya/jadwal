@@ -1,6 +1,9 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Salin URL dari dashboard Supabase Anda (Gambar 1)
+const supabaseUrl = 'https://lvbfgepuvrudlhbxgfry.supabase.co'
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Salin Anon Key dari Supabase: Project Settings -> API
+const supabaseAnonKey = 'sb_publishable_tyW-tr5PiKsnZUzvvb3jtQ_EWnwdR_U' 
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
