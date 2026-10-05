@@ -307,7 +307,6 @@ export default function App() {
     return savedSchedules ? JSON.parse(savedSchedules) : {};
   });
 
-  // State untuk menyimpan data DIISI (catatan/status rekam medis yang diisi)
   const [filledRecords, setFilledRecords] = useState(() => {
     const savedFilled = localStorage.getItem('rm_filled_records_cache');
     return savedFilled ? JSON.parse(savedFilled) : {};
@@ -457,7 +456,7 @@ export default function App() {
     fetchFilledRecordsFromDB();
   }, [currentYear, currentMonth]);
 
-  // FUNGSI SUPABASE: AMBIL JADWAL
+  // FUNGSI SUPABASE: AMBIL JADWAL (MENGGUNAKAN KOLOM date_str)
   const fetchSchedulesFromDB = async () => {
     try {
       const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
@@ -467,15 +466,15 @@ export default function App() {
       const { data, error } = await supabase
         .from('schedules')
         .select('*')
-        .gte('date', startDate)
-        .lte('date', endDate);
+        .gte('date_str', startDate)
+        .lte('date_str', endDate);
 
       if (error) throw error;
 
       if (data && data.length > 0) {
         const fetchedMap = {};
         data.forEach(item => {
-          fetchedMap[`${item.user_id}_${item.date}`] = item.shift_code;
+          fetchedMap[`${item.user_id}_${item.date_str}`] = item.shift_code;
         });
         setSchedules(prev => ({ ...prev, ...fetchedMap }));
       } else {
@@ -487,7 +486,7 @@ export default function App() {
     }
   };
 
-  // FUNGSI SUPABASE: AMBIL DATA DIISI
+  // FUNGSI SUPABASE: AMBIL DATA DIISI (JIKA TABEL DUKUNGAN TERSEDIA)
   const fetchFilledRecordsFromDB = async () => {
     try {
       const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
@@ -497,24 +496,25 @@ export default function App() {
       const { data, error } = await supabase
         .from('filled_records')
         .select('*')
-        .gte('date', startDate)
-        .lte('date', endDate);
+        .gte('date_str', startDate)
+        .lte('date_str', endDate);
 
       if (error) throw error;
 
       if (data && data.length > 0) {
         const fetchedFilled = {};
         data.forEach(item => {
-          fetchedFilled[`${item.user_id}_${item.date}`] = item.filled_value;
+          fetchedFilled[`${item.user_id}_${item.date_str}`] = item.filled_value;
         });
         setFilledRecords(prev => ({ ...prev, ...fetchedFilled }));
       }
     } catch (error) {
+      // Menggunakan fallback data dari penyimpanan lokal jika tabel tidak ada di Supabase
       console.warn('Gagal mengambil data filled_records dari Supabase (menggunakan cache lokal):', error);
     }
   };
 
-  // FUNGSI SUPABASE: SIMPAN ROTASI JADWAL OTOMATIS
+  // FUNGSI SUPABASE: SIMPAN ROTASI JADWAL OTOMATIS (MENYESUAIKAN KOLOM date_str)
   const generateAutoMonthSchedules = async () => {
     const days = getDaysInMonth(currentYear, currentMonth);
     const newSchedules = { ...schedules };
@@ -554,14 +554,14 @@ export default function App() {
           const pattern = monTueShuffles[(dayOfWeek + dayInWeekIdx) % monTueShuffles.length];
           staffIds.forEach((sId, sIdx) => {
             newSchedules[`${sId}_${dateStr}`] = pattern[sIdx];
-            recordsToInsert.push({ user_id: sId, date: dateStr, shift_code: pattern[sIdx] });
+            recordsToInsert.push({ user_id: sId, date_str: dateStr, shift_code: pattern[sIdx] });
           });
         }
         else if (dayOfWeek === 0) {
           const sunPattern = shuffleArray(['P', 'S', 'P', 'S'], weekSeed + dayInWeekIdx);
           staffIds.forEach((sId, sIdx) => {
             newSchedules[`${sId}_${dateStr}`] = sunPattern[sIdx];
-            recordsToInsert.push({ user_id: sId, date: dateStr, shift_code: sunPattern[sIdx] });
+            recordsToInsert.push({ user_id: sId, date_str: dateStr, shift_code: sunPattern[sIdx] });
           });
         }
         else {
@@ -579,19 +579,19 @@ export default function App() {
           newSchedules[`${remainingStaff[0]}_${dateStr}`] = pOrS[0];
           newSchedules[`${remainingStaff[1]}_${dateStr}`] = pOrS[1];
 
-          recordsToInsert.push({ user_id: offStaffId, date: dateStr, shift_code: 'L' });
-          recordsToInsert.push({ user_id: psStaffId, date: dateStr, shift_code: 'PS' });
-          recordsToInsert.push({ user_id: remainingStaff[0], date: dateStr, shift_code: pOrS[0] });
-          recordsToInsert.push({ user_id: remainingStaff[1], date: dateStr, shift_code: pOrS[1] });
+          recordsToInsert.push({ user_id: offStaffId, date_str: dateStr, shift_code: 'L' });
+          recordsToInsert.push({ user_id: psStaffId, date_str: dateStr, shift_code: 'PS' });
+          recordsToInsert.push({ user_id: remainingStaff[0], date_str: dateStr, shift_code: pOrS[0] });
+          recordsToInsert.push({ user_id: remainingStaff[1], date_str: dateStr, shift_code: pOrS[1] });
         }
       });
     });
 
     setSchedules(newSchedules);
 
-    // Upsert hasil rotasi ke Supabase
+    // Upsert hasil rotasi ke Supabase menggunakan constraint unique_user_per_date (user_id, date_str)
     try {
-      await supabase.from('schedules').upsert(recordsToInsert, { onConflict: 'user_id,date' });
+      await supabase.from('schedules').upsert(recordsToInsert, { onConflict: 'user_id,date_str' });
     } catch (err) {
       console.error('Gagal menyimpan jadwal tergenerasi ke Supabase:', err);
     }
@@ -638,7 +638,7 @@ export default function App() {
     }
   };
 
-  // FUNGSI SUPABASE: LOGIN
+  // FUNGSI SUPABASE: LOGIN (DENGAN MAYBESINGLE MENGHINDARI ERROR 406)
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -651,9 +651,9 @@ export default function App() {
         .from('users')
         .select('*')
         .eq('nip', targetNip)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') {
+      if (error) {
         throw error;
       }
 
@@ -665,11 +665,20 @@ export default function App() {
           alert('Password/PIN yang Anda masukkan salah!');
         }
       } else {
+        // Fallback jika pengguna belum/tidak ada di database Supabase
         if (loginAccountType === 'admin') {
-          setCurrentUser({ id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' });
+          if (inputPassword === 'admin123' || inputPassword === '123456') {
+            setCurrentUser({ id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' });
+          } else {
+            alert('Password/PIN Kepala Ruangan salah!');
+          }
         } else {
-          const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId);
-          setCurrentUser({ ...fullStaffData, role: 'employee' });
+          if (inputPassword === '123456') {
+            const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId);
+            setCurrentUser({ ...fullStaffData, role: 'employee' });
+          } else {
+            alert('Password/PIN Staf salah! (Default: 123456)');
+          }
         }
       }
 
@@ -681,7 +690,7 @@ export default function App() {
         const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId);
         setCurrentUser({ ...fullStaffData, role: 'employee' });
       }
-    } fontally: {
+    } finally {
       setIsLoggingIn(false);
     }
   };
@@ -694,14 +703,14 @@ export default function App() {
     localStorage.removeItem('rm_user_session');
   };
 
-  // FUNGSI SUPABASE: UPDATE SHIFT PER CELL
+  // FUNGSI SUPABASE: UPDATE SHIFT PER CELL (MENGGUNAKAN KOLOM date_str)
   const handleAssignShift = async (staffId, dateStr, shiftCode) => {
     try {
       const { error } = await supabase
         .from('schedules')
         .upsert(
-          { user_id: staffId, date: dateStr, shift_code: shiftCode },
-          { onConflict: 'user_id,date' }
+          { user_id: staffId, date_str: dateStr, shift_code: shiftCode },
+          { onConflict: 'user_id,date_str' }
         );
 
       if (error) console.error('Gagal memperbarui ke Supabase:', error);
@@ -728,8 +737,8 @@ export default function App() {
       const { error } = await supabase
         .from('filled_records')
         .upsert(
-          { user_id: staffId, date: dateStr, filled_value: value },
-          { onConflict: 'user_id,date' }
+          { user_id: staffId, date_str: dateStr, filled_value: value },
+          { onConflict: 'user_id,date_str' }
         );
       if (error) console.error('Gagal menyimpan nilai DIISI ke Supabase:', error);
     } catch (err) {
@@ -1316,7 +1325,6 @@ export default function App() {
                       Staf Rekam Medis
                     </th>
                     <th className="p-4 text-center w-28 border-r border-slate-800">Total Jam</th>
-                    {/* KOLOM BARU DIISI (TOTAL) */}
                     <th className="p-4 text-center w-24 border-r border-slate-800 text-teal-400 bg-teal-950/30">
                       DIISI (Total)
                     </th>
@@ -1374,7 +1382,6 @@ export default function App() {
                           </div>
                         </td>
 
-                        {/* NILAI TOTAL DIISI HINGGA BULAN INI */}
                         <td className="p-2 text-center border-r border-slate-800 bg-teal-950/20 font-mono font-bold text-teal-300 text-xs">
                           {stats.totalFilled}
                         </td>
@@ -1411,7 +1418,6 @@ export default function App() {
                                   {rawShiftCode}
                                 </button>
 
-                                {/* TOMBOL / TAMPILAN NILAI DIISI DITAMPILKAN DI SETIAP SEL TANGGAL */}
                                 <button
                                   onClick={() => {
                                     if (currentUser.role === 'admin' || currentUser.id === staff.id) {
