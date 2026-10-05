@@ -306,7 +306,16 @@ export default function App() {
     const savedSchedules = localStorage.getItem('rm_schedules_cache');
     return savedSchedules ? JSON.parse(savedSchedules) : {};
   });
+
+  // State untuk menyimpan data DIISI (catatan/status rekam medis yang diisi)
+  const [filledRecords, setFilledRecords] = useState(() => {
+    const savedFilled = localStorage.getItem('rm_filled_records_cache');
+    return savedFilled ? JSON.parse(savedFilled) : {};
+  });
+
   const [selectedCell, setSelectedCell] = useState(null);
+  const [editingFilledCell, setEditingFilledCell] = useState(null);
+  const [filledInput, setFilledInput] = useState('');
 
   const [alarmEnabled, setAlarmEnabled] = useState(true);
   const [activeAlarmModal, setActiveAlarmModal] = useState(null);
@@ -438,9 +447,14 @@ export default function App() {
     }
   }, [schedules]);
 
+  useEffect(() => {
+    localStorage.setItem('rm_filled_records_cache', JSON.stringify(filledRecords));
+  }, [filledRecords]);
+
   // Sync Data dari Supabase saat Bulan / Tahun Berubah
   useEffect(() => {
     fetchSchedulesFromDB();
+    fetchFilledRecordsFromDB();
   }, [currentYear, currentMonth]);
 
   // FUNGSI SUPABASE: AMBIL JADWAL
@@ -465,12 +479,38 @@ export default function App() {
         });
         setSchedules(prev => ({ ...prev, ...fetchedMap }));
       } else {
-        // Jika belum ada data di Supabase untuk bulan ini, generate otomatis
         generateAutoMonthSchedules();
       }
     } catch (error) {
       console.error('Gagal mengambil data dari Supabase:', error);
       generateAutoMonthSchedules();
+    }
+  };
+
+  // FUNGSI SUPABASE: AMBIL DATA DIISI
+  const fetchFilledRecordsFromDB = async () => {
+    try {
+      const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate();
+      const endDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+      const { data, error } = await supabase
+        .from('filled_records')
+        .select('*')
+        .gte('date', startDate)
+        .lte('date', endDate);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const fetchedFilled = {};
+        data.forEach(item => {
+          fetchedFilled[`${item.user_id}_${item.date}`] = item.filled_value;
+        });
+        setFilledRecords(prev => ({ ...prev, ...fetchedFilled }));
+      }
+    } catch (error) {
+      console.warn('Gagal mengambil data filled_records dari Supabase (menggunakan cache lokal):', error);
     }
   };
 
@@ -607,7 +647,6 @@ export default function App() {
     const targetNip = loginAccountType === 'admin' ? '100000000000000000' : (selectedStaff?.nip || '');
 
     try {
-      // 1. Cek User dari Supabase
       const { data: dbUser, error } = await supabase
         .from('users')
         .select('*')
@@ -626,7 +665,6 @@ export default function App() {
           alert('Password/PIN yang Anda masukkan salah!');
         }
       } else {
-        // Fallback Verifikasi Lokal jika tabel users Supabase belum terisi
         if (loginAccountType === 'admin') {
           setCurrentUser({ id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' });
         } else {
@@ -643,7 +681,7 @@ export default function App() {
         const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId);
         setCurrentUser({ ...fullStaffData, role: 'employee' });
       }
-    } finally {
+    } fontally: {
       setIsLoggingIn(false);
     }
   };
@@ -678,6 +716,30 @@ export default function App() {
     setSelectedCell(null);
   };
 
+  // FUNGSI SIMPAN DIISI (REKAM MEDIS)
+  const handleSaveFilledRecord = async (staffId, dateStr, value) => {
+    const key = `${staffId}_${dateStr}`;
+    setFilledRecords(prev => ({
+      ...prev,
+      [key]: value
+    }));
+
+    try {
+      const { error } = await supabase
+        .from('filled_records')
+        .upsert(
+          { user_id: staffId, date: dateStr, filled_value: value },
+          { onConflict: 'user_id,date' }
+        );
+      if (error) console.error('Gagal menyimpan nilai DIISI ke Supabase:', error);
+    } catch (err) {
+      console.warn('Simpan DIISI secara lokal.', err);
+    }
+
+    setEditingFilledCell(null);
+    setFilledInput('');
+  };
+
   const handleTestAlarm = () => {
     triggerAlarmModal({
       title: 'Tes Alarm Darurat Shift',
@@ -706,6 +768,7 @@ export default function App() {
     let totalWorkDays = 0;
     let totalOffDays = 0;
     let totalHours = 0;
+    let totalFilled = 0;
 
     daysInMonthList.forEach(day => {
       const dateStr = formatLocalDateStr(day);
@@ -716,9 +779,17 @@ export default function App() {
         totalWorkDays++;
         totalHours += BASE_SHIFT_TYPES[shift]?.duration || 0;
       }
+
+      const filledVal = filledRecords[`${staffId}_${dateStr}`];
+      if (filledVal) {
+        const parsedNum = parseInt(filledVal, 10);
+        if (!isNaN(parsedNum)) {
+          totalFilled += parsedNum;
+        }
+      }
     });
 
-    return { totalWorkDays, totalOffDays, totalHours };
+    return { totalWorkDays, totalOffDays, totalHours, totalFilled };
   };
 
   // HALAMAN LOGIN
@@ -823,6 +894,7 @@ export default function App() {
   const todayStr = formatLocalDateStr(today);
   const todayShiftCode = loggedInStaff ? schedules[`${loggedInStaff.id}_${todayStr}`] : null;
   const todayShiftInfo = todayShiftCode ? getShiftDisplayInfo(todayShiftCode, todayStr) : null;
+  const todayFilledVal = loggedInStaff ? filledRecords[`${loggedInStaff.id}_${todayStr}`] : null;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans pb-24 md:pb-10">
@@ -905,6 +977,9 @@ export default function App() {
                   <div className="text-[10px] text-slate-400 font-semibold uppercase">Shift Hari Ini</div>
                   <div className="text-xs text-slate-200">
                     {todayShiftInfo ? todayShiftInfo.time : '-'}
+                  </div>
+                  <div className="text-[10px] text-teal-400 font-semibold mt-1">
+                    Diisi Hari Ini: <span className="font-bold text-white">{todayFilledVal || '-'}</span>
                   </div>
                 </div>
                 {todayShiftCode && todayShiftInfo && (
@@ -1125,6 +1200,7 @@ export default function App() {
 
                 const stats = calculateStaffStats(staff.id);
                 const ShiftIcon = shiftInfo.icon;
+                const filledValue = filledRecords[`${staff.id}_${selectedDateStr}`] || '-';
 
                 return (
                   <div key={staff.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg hover:border-slate-700 transition space-y-3">
@@ -1174,6 +1250,24 @@ export default function App() {
                           <div className="font-mono text-slate-200 font-medium">{shiftInfo.time}</div>
                         </div>
                       </div>
+                      
+                      {/* INFORMASI DIISI DI VIEW KARTU */}
+                      <div 
+                        onClick={() => {
+                          if (currentUser.role === 'admin' || currentUser.id === staff.id) {
+                            setEditingFilledCell({ staffId: staff.id, staffName: staff.name, dateStr: selectedDateStr });
+                            setFilledInput(filledValue === '-' ? '' : filledValue);
+                          }
+                        }}
+                        className="text-right cursor-pointer hover:opacity-80 transition bg-teal-950/50 border border-teal-800/40 px-2.5 py-1 rounded-lg"
+                        title="Klik untuk mengubah catatan DIISI"
+                      >
+                        <div className="text-[10px] uppercase font-semibold text-teal-400 flex items-center gap-1 justify-end">
+                          DIISI <Edit3 className="w-2.5 h-2.5" />
+                        </div>
+                        <div className="font-mono text-teal-200 font-bold text-xs">{filledValue}</div>
+                      </div>
+
                       <div className="text-right">
                         <div className="text-[10px] uppercase font-semibold text-slate-500">Durasi Kerja</div>
                         <div className="font-mono text-emerald-400 font-bold">{shiftInfo.duration} Jam</div>
@@ -1181,7 +1275,7 @@ export default function App() {
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-[11px] text-slate-400">
-                      <span>Akumulasi Bulan Ini: <strong className="text-slate-200">{stats.totalHours} Jam ({stats.totalWorkDays} Kerja)</strong></span>
+                      <span>Akumulasi Bulan Ini: <strong className="text-slate-200">{stats.totalHours} Jam ({stats.totalWorkDays} Kerja)</strong> | Total Diisi: <strong className="text-teal-300">{stats.totalFilled}</strong></span>
                       {currentUser.role === 'admin' && (
                         <span 
                           className="text-emerald-400 font-medium flex items-center gap-1 cursor-pointer hover:underline"
@@ -1211,17 +1305,21 @@ export default function App() {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
             <div className="p-3 bg-slate-950 border-b border-slate-800 text-xs text-slate-400 flex items-center justify-between flex-wrap gap-2">
               <span>Tabel Matriks Shift - {new Date(currentYear, currentMonth, 1).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</span>
-              <span className="text-amber-400 font-semibold">* Klik header tanggal untuk detail Kalender Bali & Hari Raya</span>
+              <span className="text-amber-400 font-semibold">* Klik header tanggal untuk detail Kalender Bali & Hari Raya. Klik sel "DIISI" untuk mengedit.</span>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[980px]">
+              <table className="w-full text-left border-collapse min-w-[1080px]">
                 <thead>
                   <tr className="bg-slate-950/90 border-b border-slate-800 text-xs font-semibold text-slate-400">
                     <th className="p-4 sticky left-0 bg-slate-950 z-10 w-56 border-r border-slate-800">
                       Staf Rekam Medis
                     </th>
                     <th className="p-4 text-center w-28 border-r border-slate-800">Total Jam</th>
+                    {/* KOLOM BARU DIISI (TOTAL) */}
+                    <th className="p-4 text-center w-24 border-r border-slate-800 text-teal-400 bg-teal-950/30">
+                      DIISI (Total)
+                    </th>
                     {daysInMonthList.map(day => {
                       const dateStr = formatLocalDateStr(day);
                       const isToday = dateStr === formatLocalDateStr(today);
@@ -1233,7 +1331,7 @@ export default function App() {
                         <th
                           key={dateStr}
                           onClick={() => setCalendarDetailModalDate(dateStr)}
-                          className={`p-2 text-center min-w-[54px] cursor-pointer hover:bg-amber-500/10 transition border-r border-slate-800/50 ${
+                          className={`p-2 text-center min-w-[64px] cursor-pointer hover:bg-amber-500/10 transition border-r border-slate-800/50 ${
                             isToday ? 'bg-emerald-950/80 text-emerald-300 font-bold' : ''
                           } ${status.isHoliday ? 'bg-red-950/50 text-red-300 border-b-2 border-b-red-500' : ''}`}
                           title="Klik untuk melihat Detail Kalender Bali & Hari Raya"
@@ -1276,35 +1374,61 @@ export default function App() {
                           </div>
                         </td>
 
+                        {/* NILAI TOTAL DIISI HINGGA BULAN INI */}
+                        <td className="p-2 text-center border-r border-slate-800 bg-teal-950/20 font-mono font-bold text-teal-300 text-xs">
+                          {stats.totalFilled}
+                        </td>
+
                         {daysInMonthList.map(day => {
                           const dateStr = formatLocalDateStr(day);
                           const rawShiftCode = schedules[`${staff.id}_${dateStr}`] || 'L';
                           const shiftInfo = getShiftDisplayInfo(rawShiftCode, dateStr);
                           const isDimmed = shiftFilter !== 'ALL' && shiftFilter !== rawShiftCode;
+                          const filledVal = filledRecords[`${staff.id}_${dateStr}`] || '';
 
                           return (
                             <td
                               key={dateStr}
                               className={`p-1 text-center border-r border-slate-800/40 ${isDimmed ? 'opacity-30' : ''}`}
                             >
-                              <button
-                                onClick={() => {
-                                  if (currentUser.role === 'admin') {
-                                    setSelectedCell({
-                                      staffId: staff.id,
-                                      staffName: staff.name,
-                                      dateStr,
-                                      currentShift: rawShiftCode
-                                    });
-                                  }
-                                }}
-                                disabled={currentUser.role !== 'admin'}
-                                className={`w-full py-2 px-1 rounded-lg border text-xs font-bold transition flex items-center justify-center ${
-                                  shiftInfo.color
-                                } ${currentUser.role === 'admin' ? 'hover:scale-105 active:scale-95 cursor-pointer' : 'cursor-default'}`}
-                              >
-                                {rawShiftCode}
-                              </button>
+                              <div className="flex flex-col gap-1">
+                                <button
+                                  onClick={() => {
+                                    if (currentUser.role === 'admin') {
+                                      setSelectedCell({
+                                        staffId: staff.id,
+                                        staffName: staff.name,
+                                        dateStr,
+                                        currentShift: rawShiftCode
+                                      });
+                                    }
+                                  }}
+                                  disabled={currentUser.role !== 'admin'}
+                                  className={`w-full py-1 px-1 rounded-lg border text-xs font-bold transition flex items-center justify-center ${
+                                    shiftInfo.color
+                                  } ${currentUser.role === 'admin' ? 'hover:scale-105 active:scale-95 cursor-pointer' : 'cursor-default'}`}
+                                >
+                                  {rawShiftCode}
+                                </button>
+
+                                {/* TOMBOL / TAMPILAN NILAI DIISI DITAMPILKAN DI SETIAP SEL TANGGAL */}
+                                <button
+                                  onClick={() => {
+                                    if (currentUser.role === 'admin' || currentUser.id === staff.id) {
+                                      setEditingFilledCell({ staffId: staff.id, staffName: staff.name, dateStr });
+                                      setFilledInput(filledVal);
+                                    }
+                                  }}
+                                  className={`w-full text-[10px] py-0.5 px-1 rounded font-mono border transition ${
+                                    filledVal 
+                                      ? 'bg-teal-950/80 text-teal-200 border-teal-600/50 hover:bg-teal-900' 
+                                      : 'bg-slate-950/60 text-slate-500 border-slate-800 hover:text-slate-300'
+                                  }`}
+                                  title="Klik untuk mengisi/mengedit status Rekam Medis Diisi"
+                                >
+                                  {filledVal ? `D: ${filledVal}` : '+ Diisi'}
+                                </button>
+                              </div>
                             </td>
                           );
                         })}
@@ -1318,6 +1442,63 @@ export default function App() {
         )}
 
       </main>
+
+      {/* POP-UP MODAL EDIT DIISI */}
+      {editingFilledCell && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-teal-500/40 rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-teal-500/20 text-teal-300 border border-teal-500/30 flex items-center justify-center">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">Update Catatan DIISI</h3>
+                  <p className="text-[11px] text-slate-400">{editingFilledCell.staffName} ({editingFilledCell.dateStr})</p>
+                </div>
+              </div>
+              <button onClick={() => setEditingFilledCell(null)} className="text-slate-400 hover:text-white p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              handleSaveFilledRecord(editingFilledCell.staffId, editingFilledCell.dateStr, filledInput);
+            }} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-400 mb-1.5">
+                  Jumlah / Keterangan Berkas Diisi
+                </label>
+                <input
+                  type="text"
+                  value={filledInput}
+                  onChange={(e) => setFilledInput(e.target.value)}
+                  placeholder="Contoh: 15 / Selesai / 10 Berkas..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                  autoFocus
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingFilledCell(null)}
+                  className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="py-2.5 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-teal-600/30"
+                >
+                  Simpan Diisi
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* POP-UP MODAL KONFIRMASI LOGOUT */}
       {isLogoutModalOpen && (
