@@ -6,7 +6,7 @@ import {
   FileText, Calendar, AlertCircle, CheckCircle2,
   TrendingUp, Sun, Moon, Zap, Coffee, Sparkles, HeartHandshake, RefreshCw, Info
 } from 'lucide-react';
-import { supabase } from './supabaseClient';
+import { supabase } from '../lib/supabase';
 
 // =========================================================================
 // DATABASE HARI RAYA & TANGGAL MERAH RESMI
