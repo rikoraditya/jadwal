@@ -6,16 +6,12 @@ import {
   FileText, Calendar, AlertCircle, CheckCircle2,
   TrendingUp, Sun, Moon, Zap, Coffee, Sparkles, HeartHandshake, RefreshCw, Info
 } from 'lucide-react';
-
-// URL API Backend Express SQL
-const API_BASE_URL = '/api';
+import { supabase } from './supabaseClient';
 
 // =========================================================================
-// DATABASE HARI RAYA & TANGGAL MERAH RESMI (HANYA DARI DAFTAR USER)
-// Menghapus semua tanggal merah lama & disesuaikan 100% presisi dengan daftar
+// DATABASE HARI RAYA & TANGGAL MERAH RESMI
 // =========================================================================
 const HOLIDAYS_DATABASE = {
-  // --- DAFTAR RESMI RERAINAN & HARI RAYA 2026 (KHUSUS SESUAI INPUT) ---
   "2026-01-01": "Tahun Baru 2026 Masehi",
   "2026-01-03": "Tumpek Krulut, Purnama",
   "2026-01-07": "Buda Wage Merakih",
@@ -119,7 +115,7 @@ const HOLIDAYS_DATABASE = {
 };
 
 // =========================================================================
-// HELPER PERHITUNGAN TANGGAL LOKAL AMAN (MENCEGAH MELESET JAM UTC)
+// HELPER PERHITUNGAN TANGGAL LOKAL AMAN
 // =========================================================================
 const parseLocalDate = (dateStr) => {
   if (!dateStr) return new Date();
@@ -148,11 +144,10 @@ const TRIWARA_LIST = ["Pasah", "Beteng", "Kajeng"];
 const PANCAWARA_LIST = ["Umanis", "Paing", "Pon", "Wage", "Kliwon"];
 const SAPTAWARA_LIST = ["Redite", "Soma", "Anggara", "Buda", "Wraspati", "Sukra", "Saniscara"];
 
-// ANCHOR AKURAT: 04 Januari 2026 = Redite Umanis Pasah Wuku Sinta
 const ANCHOR_2026 = new Date(2026, 0, 4, 0, 0, 0, 0); 
-const ANCHOR_WUKU_INDEX = 0; // Sinta
-const ANCHOR_PANCAWARA_INDEX = 0; // Umanis
-const ANCHOR_TRIWARA_INDEX = 0; // Pasah
+const ANCHOR_WUKU_INDEX = 0;
+const ANCHOR_PANCAWARA_INDEX = 0;
+const ANCHOR_TRIWARA_INDEX = 0;
 
 const getBaliCalendarDetails = (dateObj) => {
   const target = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate(), 0, 0, 0, 0);
@@ -192,7 +187,7 @@ const getBaliCalendarDetails = (dateObj) => {
   };
 };
 
-// Merekam jenis shift dasar
+// Jenis shift dasar
 const BASE_SHIFT_TYPES = {
   P: { 
     label: 'Pagi', 
@@ -232,14 +227,13 @@ const BASE_SHIFT_TYPES = {
   }
 };
 
-// Styling khusus warna MERAH untuk shift kerja di Hari Raya / Libur Murni Input
 const HOLIDAY_SHIFT_STYLES = {
   P: {
     color: 'bg-red-950/90 text-red-200 border-red-500/80 hover:bg-red-900/90 ring-1 ring-red-500/50 shadow-red-900/40 shadow-lg',
     badge: 'bg-red-500/30 text-red-200 border-red-500/60'
   },
   S: {
-    color: 'bg-rose-950/90 text-rose-200 border-rose-500/80 hover:bg-rose-900/90 ring-1 ring-rose-900/90 ring-1 ring-rose-500/50 shadow-rose-900/40 shadow-lg',
+    color: 'bg-rose-950/90 text-rose-200 border-rose-500/80 hover:bg-rose-900/90 ring-1 ring-rose-500/50 shadow-rose-900/40 shadow-lg',
     badge: 'bg-rose-500/30 text-rose-200 border-rose-500/60'
   },
   PS: {
@@ -295,7 +289,6 @@ export default function App() {
   const [inputPassword, setInputPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // State Modal Logout
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   const today = new Date();
@@ -307,7 +300,6 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [shiftFilter, setShiftFilter] = useState('ALL');
 
-  // State Pop-Up Detail Kalender Bali Modal
   const [calendarDetailModalDate, setCalendarDetailModalDate] = useState(null);
 
   const [schedules, setSchedules] = useState(() => {
@@ -320,17 +312,14 @@ export default function App() {
   const [activeAlarmModal, setActiveAlarmModal] = useState(null);
   const [liveTime, setLiveTime] = useState(new Date());
 
-  // Ref untuk mengontrol pemutaran audio alarm darurat (looping continuous)
   const alarmAudioContextRef = useRef(null);
   const alarmIntervalRef = useRef(null);
 
-  // Fungsi Pengecekan Tanggal Merah Khas Inputan User
   const checkHolidayStatus = (dateStr) => {
     if (!dateStr) return { isHoliday: false, label: '' };
     const date = parseLocalDate(dateStr);
     const isSunday = date.getDay() === 0;
 
-    // Hanya menggunakan HOLIDAYS_DATABASE dari daftar persis yang dikirim
     const nationalHolidayLabel = HOLIDAYS_DATABASE[dateStr];
     const baliInfo = getBaliCalendarDetails(date);
 
@@ -349,7 +338,6 @@ export default function App() {
     };
   };
 
-  // Helper Shift Display
   const getShiftDisplayInfo = (shiftCode, dateStr) => {
     const base = BASE_SHIFT_TYPES[shiftCode] || BASE_SHIFT_TYPES.L;
     const status = checkHolidayStatus(dateStr);
@@ -367,10 +355,9 @@ export default function App() {
     return base;
   };
 
-  // WEB AUDIO API: ALARM KERAS & MELENGKING KHAS DARURAT RUMAH SAKIT (LOOPING)
   const playHospitalAlarmSound = () => {
     try {
-      stopHospitalAlarmSound(); // Bersihkan audio sebelumnya jika ada
+      stopHospitalAlarmSound();
       
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
@@ -381,7 +368,6 @@ export default function App() {
       const playEmergencySirenPattern = () => {
         if (!alarmAudioContextRef.current) return;
 
-        // Gelombang Sawtooth + Square memberikan efek suara melengking tajam khas alarm emergency
         const osc1 = ctx.createOscillator();
         const osc2 = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -391,7 +377,6 @@ export default function App() {
 
         const now = ctx.currentTime;
 
-        // Modulasi Frekuensi Tinggi Melengking (Siren Code Blue / Emergency)
         osc1.frequency.setValueAtTime(880, now);
         osc1.frequency.exponentialRampToValueAtTime(1760, now + 0.25);
         osc1.frequency.exponentialRampToValueAtTime(880, now + 0.5);
@@ -400,7 +385,6 @@ export default function App() {
         osc2.frequency.exponentialRampToValueAtTime(2349.32, now + 0.25);
         osc2.frequency.exponentialRampToValueAtTime(1174.66, now + 0.5);
 
-        // Volume Keras
         gain.gain.setValueAtTime(0.4, now);
         gain.gain.linearRampToValueAtTime(0.5, now + 0.25);
         gain.gain.linearRampToValueAtTime(0.01, now + 0.55);
@@ -415,7 +399,6 @@ export default function App() {
         osc2.stop(now + 0.55);
       };
 
-      // Jalankan siklus pertama & set interval pengulangan terus-menerus (loop)
       playEmergencySirenPattern();
       alarmIntervalRef.current = setInterval(playEmergencySirenPattern, 650);
     } catch (err) {
@@ -455,29 +438,44 @@ export default function App() {
     }
   }, [schedules]);
 
+  // Sync Data dari Supabase saat Bulan / Tahun Berubah
   useEffect(() => {
     fetchSchedulesFromDB();
   }, [currentYear, currentMonth]);
 
+  // FUNGSI SUPABASE: AMBIL JADWAL
   const fetchSchedulesFromDB = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/schedules?year=${currentYear}&month=${currentMonth}`);
-      const result = await response.json();
-      
-      if (result.success && result.data && Object.keys(result.data).length > 0) {
-        setSchedules(prev => ({ ...prev, ...result.data }));
-      } else if (Object.keys(schedules).length === 0) {
+      const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
+      const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate();
+      const endDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+      const { data, error } = await supabase
+        .from('schedules')
+        .select('*')
+        .gte('date', startDate)
+        .lte('date', endDate);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const fetchedMap = {};
+        data.forEach(item => {
+          fetchedMap[`${item.user_id}_${item.date}`] = item.shift_code;
+        });
+        setSchedules(prev => ({ ...prev, ...fetchedMap }));
+      } else {
+        // Jika belum ada data di Supabase untuk bulan ini, generate otomatis
         generateAutoMonthSchedules();
       }
     } catch (error) {
-      if (Object.keys(schedules).length === 0) {
-        generateAutoMonthSchedules();
-      }
+      console.error('Gagal mengambil data dari Supabase:', error);
+      generateAutoMonthSchedules();
     }
   };
 
-  // GENERATOR ROTASI OTOMATIS
-  const generateAutoMonthSchedules = () => {
+  // FUNGSI SUPABASE: SIMPAN ROTASI JADWAL OTOMATIS
+  const generateAutoMonthSchedules = async () => {
     const days = getDaysInMonth(currentYear, currentMonth);
     const newSchedules = { ...schedules };
     const staffIds = REKAM_MEDIS_STAFF.map(s => s.id);
@@ -495,6 +493,7 @@ export default function App() {
     if (currentWeek.length > 0) weeks.push(currentWeek);
 
     const baseSeed = currentYear * 100 + currentMonth + Date.now();
+    const recordsToInsert = [];
 
     weeks.forEach((weekDays, weekIdx) => {
       const weekSeed = baseSeed + weekIdx * 17;
@@ -515,12 +514,14 @@ export default function App() {
           const pattern = monTueShuffles[(dayOfWeek + dayInWeekIdx) % monTueShuffles.length];
           staffIds.forEach((sId, sIdx) => {
             newSchedules[`${sId}_${dateStr}`] = pattern[sIdx];
+            recordsToInsert.push({ user_id: sId, date: dateStr, shift_code: pattern[sIdx] });
           });
         }
         else if (dayOfWeek === 0) {
           const sunPattern = shuffleArray(['P', 'S', 'P', 'S'], weekSeed + dayInWeekIdx);
           staffIds.forEach((sId, sIdx) => {
             newSchedules[`${sId}_${dateStr}`] = sunPattern[sIdx];
+            recordsToInsert.push({ user_id: sId, date: dateStr, shift_code: sunPattern[sIdx] });
           });
         }
         else {
@@ -537,11 +538,23 @@ export default function App() {
           newSchedules[`${psStaffId}_${dateStr}`] = 'PS';
           newSchedules[`${remainingStaff[0]}_${dateStr}`] = pOrS[0];
           newSchedules[`${remainingStaff[1]}_${dateStr}`] = pOrS[1];
+
+          recordsToInsert.push({ user_id: offStaffId, date: dateStr, shift_code: 'L' });
+          recordsToInsert.push({ user_id: psStaffId, date: dateStr, shift_code: 'PS' });
+          recordsToInsert.push({ user_id: remainingStaff[0], date: dateStr, shift_code: pOrS[0] });
+          recordsToInsert.push({ user_id: remainingStaff[1], date: dateStr, shift_code: pOrS[1] });
         }
       });
     });
 
     setSchedules(newSchedules);
+
+    // Upsert hasil rotasi ke Supabase
+    try {
+      await supabase.from('schedules').upsert(recordsToInsert, { onConflict: 'user_id,date' });
+    } catch (err) {
+      console.error('Gagal menyimpan jadwal tergenerasi ke Supabase:', err);
+    }
   };
 
   useEffect(() => {
@@ -585,6 +598,7 @@ export default function App() {
     }
   };
 
+  // FUNGSI SUPABASE: LOGIN
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -593,33 +607,36 @@ export default function App() {
     const targetNip = loginAccountType === 'admin' ? '100000000000000000' : (selectedStaff?.nip || '');
 
     try {
-      const response = await fetch(`${API_BASE_URL}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nip: targetNip, password: inputPassword })
-      });
+      // 1. Cek User dari Supabase
+      const { data: dbUser, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('nip', targetNip)
+        .single();
 
-      const result = await response.json();
-
-      // PERIKSA STATUS RESPONSE DARI BACKEND
-      if (!response.ok) {
-        // Jika status HTTP bukan 200 (misal 401 atau 500)
-        alert(result.message || 'Login gagal!');
-        return;
+      if (error && error.code !== 'PGRST116') {
+        throw error;
       }
 
-      // Login Berhasil
-      if (result.user) {
-        const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === result.user.id) || {};
-        setCurrentUser({ ...fullStaffData, ...result.user });
+      if (dbUser) {
+        if (dbUser.password === inputPassword) {
+          const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === dbUser.id) || {};
+          setCurrentUser({ ...fullStaffData, ...dbUser });
+        } else {
+          alert('Password/PIN yang Anda masukkan salah!');
+        }
       } else {
-        const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId) || {};
-        setCurrentUser(loginAccountType === 'admin' ? { id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' } : { ...fullStaffData, role: 'employee' });
+        // Fallback Verifikasi Lokal jika tabel users Supabase belum terisi
+        if (loginAccountType === 'admin') {
+          setCurrentUser({ id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' });
+        } else {
+          const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId);
+          setCurrentUser({ ...fullStaffData, role: 'employee' });
+        }
       }
 
     } catch (error) {
-      console.error('Error login:', error);
-      // Fallback jika API backend belum terhubung/offline
+      console.error('Error saat login:', error);
       if (loginAccountType === 'admin') {
         setCurrentUser({ id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' });
       } else {
@@ -639,15 +656,19 @@ export default function App() {
     localStorage.removeItem('rm_user_session');
   };
 
+  // FUNGSI SUPABASE: UPDATE SHIFT PER CELL
   const handleAssignShift = async (staffId, dateStr, shiftCode) => {
     try {
-      await fetch(`${API_BASE_URL}/schedules/update`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: staffId, dateStr, shiftCode })
-      });
+      const { error } = await supabase
+        .from('schedules')
+        .upsert(
+          { user_id: staffId, date: dateStr, shift_code: shiftCode },
+          { onConflict: 'user_id,date' }
+        );
+
+      if (error) console.error('Gagal memperbarui ke Supabase:', error);
     } catch (err) {
-      console.warn('Update lokal disimpan.');
+      console.warn('Operasi offline / lokal disimpan.', err);
     }
 
     setSchedules(prev => ({
@@ -1467,7 +1488,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL ALARM SHIFT (DARURAT & CONTINUOUS LOOPING) */}
+      {/* MODAL ALARM SHIFT */}
       {activeAlarmModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl max-w-sm w-full p-6 shadow-2xl shadow-amber-500/20 text-center relative overflow-hidden">
