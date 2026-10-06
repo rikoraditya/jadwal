@@ -280,6 +280,13 @@ const shuffleArray = (array, seed) => {
 };
 
 export default function App() {
+  // Minta izin Notifikasi saat aplikasi dibuka
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission !== 'granted') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('rm_user_session');
     return savedUser ? JSON.parse(savedUser) : null;
