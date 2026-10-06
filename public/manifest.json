@@ -1,0 +1,28 @@
+{
+  "name": "Sistem Jadwal Shift Rekam Medis",
+  "short_name": "Jadwal Shift",
+  "description": "Aplikasi Manajemen Jadwal Shift Staf Rekam Medis",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/pwa-192x192.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/pwa-512x512.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/pwa-512x512.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}
