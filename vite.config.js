@@ -18,17 +18,17 @@ export default defineConfig({
         orientation: 'portrait',
         icons: [
           {
-            src: 'pwa-192x192.png',
+            src: 'pwa-192x192.jpg',
             sizes: '192x192',
-            type: 'image/jpg'
+            type: 'image/jpeg'
           },
           {
-            src: 'pwa-512x512.png',
+            src: 'pwa-512x512.jpeg',
             sizes: '512x512',
             type: 'image/jpg'
           },
           {
-            src: 'pwa-512x512.png',
+            src: 'pwa-512x512.jpeg',
             sizes: '512x512',
             type: 'image/jpg',
             purpose: 'any maskable'
