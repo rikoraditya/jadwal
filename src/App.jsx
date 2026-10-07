@@ -10,45 +10,6 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { supabase } from './supabaseClient';
 
 // =========================================================================
-// FUNGSI LOCAL NOTIFICATIONS CAPACITOR
-// =========================================================================
-async function buatAlarmPopUp(judul, pesan, waktuPemicu) {
-  try {
-    // 1. Minta izin notifikasi ke pengguna
-    const perm = await LocalNotifications.requestPermissions();
-    if (perm.display !== 'granted') return;
-
-    // 2. Buat Notification Channel Prioritas Tinggi (Wajib untuk Android 8+)
-    await LocalNotifications.createChannel({
-      id: 'alarm_channel',
-      name: 'Notifikasi Alarm Jadwal',
-      description: 'Channel untuk alarm jadwal penting',
-      importance: 5, // 5 = High/Max Importance (Memicu Pop-up Melayang + Suara)
-      visibility: 1,  // 1 = Public (Muncul di Lockscreen)
-      sound: 'alarm_sound.wav', // Atau biarkan sistem menggunakan suara default
-      vibration: true,
-    });
-
-    // 3. Pasang Notifikasi
-    await LocalNotifications.schedule({
-      notifications: [
-        {
-          title: judul,
-          body: pesan,
-          id: Math.floor(Math.random() * 1000000), // ID unik acak
-          schedule: { at: waktuPemicu },
-          channelId: 'alarm_channel', // Hubungkan ke channel tinggi di atas
-          actionTypeId: '',
-          extra: null
-        }
-      ]
-    });
-  } catch (err) {
-    console.warn("LocalNotifications error/desktop web fallback:", err);
-  }
-}
-
-// =========================================================================
 // DATABASE HARI RAYA & TANGGAL MERAH RESMI (2026)
 // =========================================================================
 const HOLIDAYS_DATABASE = {
@@ -320,14 +281,65 @@ const shuffleArray = (array, seed) => {
 };
 
 export default function App() {
-  // Minta izin Notifikasi saat aplikasi dibuka
+  // 1. Inisialisasi Notification Channel khusus Alarm saat App pertama dimuat
   useEffect(() => {
-    if ('Notification' in window && Notification.permission !== 'granted') {
-      Notification.requestPermission();
-    }
-    // Minta izin Local Notifications Capacitor untuk Android/Mobile
-    LocalNotifications.requestPermissions();
+    const setupAlarmChannel = async () => {
+      try {
+        const perm = await LocalNotifications.checkPermissions();
+        if (perm.display !== 'granted') {
+          await LocalNotifications.requestPermissions();
+        }
+
+        await LocalNotifications.createChannel({
+          id: 'full_alarm_channel',
+          name: 'Alarm Jam Weker Rekam Medis',
+          description: 'Channel Notifikasi Alarm Full Screen',
+          importance: 5,
+          sound: 'alarm',
+          visibility: 1,
+          vibration: true,
+          lights: true,
+          lightColor: '#FF0000',
+        });
+      } catch (error) {
+        console.log('Berjalan di Web Browser / Bukan Native Android:', error);
+      }
+    };
+
+    setupAlarmChannel();
   }, []);
+
+  // 2. Fungsi Pemicu Alarm Native
+  const triggerWakerAlarm = async (judul, pesan) => {
+    try {
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            title: judul || "⚠️ ALARM DARURAT RUMAH SAKIT!",
+            body: pesan || "Panggilan rekam medis aktif. Ketuk untuk mematikan!",
+            id: 999,
+            schedule: { at: new Date(Date.now() + 300) },
+            sound: 'alarm',
+            channelId: 'full_alarm_channel',
+            ongoing: true,
+            autoCancel: false,
+            actionTypeId: 'ALARM_ACTIONS'
+          }
+        ]
+      });
+    } catch (err) {
+      console.error("Gagal membunyikan alarm:", err);
+    }
+  };
+
+  // 3. Fungsi Mematikan Alarm Native
+  const stopWakerAlarm = async () => {
+    try {
+      await LocalNotifications.cancel({ notifications: [{ id: 999 }] });
+    } catch (err) {
+      console.error("Gagal mematikan alarm:", err);
+    }
+  };
 
   const [currentUser, setCurrentUser] = useState(() => {
     const savedUser = localStorage.getItem('rm_user_session');
@@ -477,6 +489,7 @@ export default function App() {
   };
 
   const closeAlarmModal = () => {
+    stopWakerAlarm();
     stopHospitalAlarmSound();
     setActiveAlarmModal(null);
   };
@@ -499,13 +512,11 @@ export default function App() {
     localStorage.setItem('rm_filled_records_cache', JSON.stringify(filledRecords));
   }, [filledRecords]);
 
-  // Sync Data dari Supabase saat Bulan / Tahun Berubah
   useEffect(() => {
     fetchSchedulesFromDB();
     fetchFilledRecordsFromDB();
   }, [currentYear, currentMonth]);
 
-  // FUNGSI SUPABASE: AMBIL JADWAL
   const fetchSchedulesFromDB = async () => {
     try {
       const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
@@ -535,7 +546,6 @@ export default function App() {
     }
   };
 
-  // FUNGSI SUPABASE: AMBIL DATA DIISI
   const fetchFilledRecordsFromDB = async () => {
     try {
       const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
@@ -562,7 +572,6 @@ export default function App() {
     }
   };
 
-  // FUNGSI SUPABASE: SIMPAN ROTASI JADWAL OTOMATIS
   const generateAutoMonthSchedules = async () => {
     const days = getDaysInMonth(currentYear, currentMonth);
     const newSchedules = { ...schedules };
@@ -657,7 +666,6 @@ export default function App() {
     return () => clearInterval(timer);
   }, [currentUser, alarmEnabled, schedules]);
 
-  // INTEGRASI PEMERIKSAAN ALARM SHIFT (SISTEM IN-APP & LOCAL PUSH NOTIFICATIONS)
   const checkPersonalShiftAlarm = (now) => {
     if (currentUser.role === 'admin') return;
 
@@ -681,7 +689,6 @@ export default function App() {
       const judul = `Peringatan Shift Kerja ${currentUser.name}!`;
       const pesan = `Halo ${currentUser.fullTitle}, jadwal Shift ${info.label} Anda akan dimulai dalam 30 menit. Mohon bersiap menuju Ruang Rekam Medis.`;
 
-      // Trigger modal in-app
       triggerAlarmModal({
         title: judul,
         message: pesan,
@@ -689,12 +696,10 @@ export default function App() {
         staffName: currentUser.name
       });
 
-      // Trigger Push Notification HP via @capacitor/local-notifications
-      buatAlarmPopUp(judul, pesan, new Date(Date.now() + 1000));
+      triggerWakerAlarm(judul, pesan);
     }
   };
 
-  // FUNGSI SUPABASE: LOGIN
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -745,12 +750,13 @@ export default function App() {
         const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId);
         setCurrentUser({ ...fullStaffData, role: 'employee' });
       }
-    } {
+    } finally {
       setIsLoggingIn(false);
     }
   };
 
   const handleLogout = () => {
+    stopWakerAlarm();
     stopHospitalAlarmSound();
     setCurrentUser(null);
     setInputPassword('');
@@ -758,7 +764,6 @@ export default function App() {
     localStorage.removeItem('rm_user_session');
   };
 
-  // FUNGSI SUPABASE: UPDATE SHIFT PER CELL
   const handleAssignShift = async (staffId, dateStr, shiftCode) => {
     try {
       const { error } = await supabase
@@ -780,7 +785,6 @@ export default function App() {
     setSelectedCell(null);
   };
 
-  // FUNGSI SIMPAN DIISI (REKAM MEDIS)
   const handleSaveFilledRecord = async (staffId, dateStr, value) => {
     const key = `${staffId}_${dateStr}`;
     setFilledRecords(prev => ({
@@ -815,8 +819,7 @@ export default function App() {
       staffName: currentUser ? currentUser.name : 'Staf Rekam Medis'
     });
 
-    // Panggil fungsi Local Notifications Capacitor untuk pengujian
-    buatAlarmPopUp(judul, pesan, new Date(Date.now() + 2000));
+    triggerWakerAlarm(judul, pesan);
   };
 
   const triggerAlarmModal = (alarmData) => {
@@ -862,7 +865,6 @@ export default function App() {
     return { totalWorkDays, totalOffDays, totalHours, totalFilled };
   };
 
-  // HALAMAN LOGIN
   if (!currentUser) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
@@ -969,7 +971,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans pb-24 md:pb-10">
       
-      {/* Header Utama */}
       <header className="bg-slate-900/90 backdrop-blur sticky top-0 z-30 border-b border-slate-800 px-4 lg:px-8 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-600/30">
@@ -1021,10 +1022,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Container */}
       <main className="flex-1 p-4 lg:p-8 max-w-7xl w-full mx-auto space-y-5">
 
-        {/* Banner Pegawai Aktif */}
         {loggedInStaff && (
           <div className="bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-800/50 rounded-3xl p-5 shadow-xl relative overflow-hidden">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
@@ -1063,7 +1062,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Navigasi Bulan & Tombol Generasi Rotasi */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 sm:p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
           
           <div className="flex items-center justify-between sm:justify-start gap-3">
@@ -1132,7 +1130,6 @@ export default function App() {
 
         </div>
 
-        {/* Legend Indikator Warna Shift */}
         <div className="space-y-2">
           <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between flex-wrap gap-1">
             <span className="flex items-center gap-1.5">
@@ -1189,7 +1186,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Kontrol Filter & Pencarian */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
           
           <div className="relative flex-1">
@@ -1237,7 +1233,6 @@ export default function App() {
 
         </div>
 
-        {/* VIEW 1: KARTU HARIAN */}
         {viewMode === 'card' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between text-xs font-semibold text-slate-400 px-1">
@@ -1369,7 +1364,6 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: TABEL MATRIKS BULANAN */}
         {viewMode === 'table' && (
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
             <div className="p-3 bg-slate-950 border-b border-slate-800 text-xs text-slate-400 flex items-center justify-between flex-wrap gap-2">
@@ -1509,7 +1503,6 @@ export default function App() {
 
       </main>
 
-      {/* POP-UP MODAL EDIT DIISI */}
       {editingFilledCell && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-teal-500/40 rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
@@ -1566,7 +1559,6 @@ export default function App() {
         </div>
       )}
 
-      {/* POP-UP MODAL KONFIRMASI LOGOUT */}
       {isLogoutModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl text-center space-y-4">
@@ -1599,7 +1591,6 @@ export default function App() {
         </div>
       )}
 
-      {/* POP-UP MODAL DETAIL KALENDER BALI & HARI RAYA */}
       {calendarDetailModalDate && (() => {
         const detailDate = parseLocalDate(calendarDetailModalDate);
         const bali = getBaliCalendarDetails(detailDate);
@@ -1675,7 +1666,6 @@ export default function App() {
         );
       })()}
 
-      {/* MODAL EDIT SHIFT */}
       {selectedCell && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-2xl max-w-md w-full p-6 shadow-2xl">
@@ -1735,7 +1725,6 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL ALARM SHIFT */}
       {activeAlarmModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl max-w-sm w-full p-6 shadow-2xl shadow-amber-500/20 text-center relative overflow-hidden">
