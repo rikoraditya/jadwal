@@ -6,10 +6,50 @@ import {
   FileText, Calendar, AlertCircle, CheckCircle2,
   TrendingUp, Sun, Moon, Zap, Coffee, Sparkles, HeartHandshake, RefreshCw, Info
 } from 'lucide-react';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { supabase } from './supabaseClient';
 
 // =========================================================================
-// DATABASE HARI RAYA & TANGGAL MERAH RESMI
+// FUNGSI LOCAL NOTIFICATIONS CAPACITOR
+// =========================================================================
+async function buatAlarmPopUp(judul, pesan, waktuPemicu) {
+  try {
+    // 1. Minta izin notifikasi ke pengguna
+    const perm = await LocalNotifications.requestPermissions();
+    if (perm.display !== 'granted') return;
+
+    // 2. Buat Notification Channel Prioritas Tinggi (Wajib untuk Android 8+)
+    await LocalNotifications.createChannel({
+      id: 'alarm_channel',
+      name: 'Notifikasi Alarm Jadwal',
+      description: 'Channel untuk alarm jadwal penting',
+      importance: 5, // 5 = High/Max Importance (Memicu Pop-up Melayang + Suara)
+      visibility: 1,  // 1 = Public (Muncul di Lockscreen)
+      sound: 'alarm_sound.wav', // Atau biarkan sistem menggunakan suara default
+      vibration: true,
+    });
+
+    // 3. Pasang Notifikasi
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          title: judul,
+          body: pesan,
+          id: Math.floor(Math.random() * 1000000), // ID unik acak
+          schedule: { at: waktuPemicu },
+          channelId: 'alarm_channel', // Hubungkan ke channel tinggi di atas
+          actionTypeId: '',
+          extra: null
+        }
+      ]
+    });
+  } catch (err) {
+    console.warn("LocalNotifications error/desktop web fallback:", err);
+  }
+}
+
+// =========================================================================
+// DATABASE HARI RAYA & TANGGAL MERAH RESMI (2026)
 // =========================================================================
 const HOLIDAYS_DATABASE = {
   "2026-01-01": "Tahun Baru 2026 Masehi",
@@ -285,6 +325,8 @@ export default function App() {
     if ('Notification' in window && Notification.permission !== 'granted') {
       Notification.requestPermission();
     }
+    // Minta izin Local Notifications Capacitor untuk Android/Mobile
+    LocalNotifications.requestPermissions();
   }, []);
 
   const [currentUser, setCurrentUser] = useState(() => {
@@ -463,7 +505,7 @@ export default function App() {
     fetchFilledRecordsFromDB();
   }, [currentYear, currentMonth]);
 
-  // FUNGSI SUPABASE: AMBIL JADWAL (MENGGUNAKAN KOLOM date_str)
+  // FUNGSI SUPABASE: AMBIL JADWAL
   const fetchSchedulesFromDB = async () => {
     try {
       const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
@@ -493,7 +535,7 @@ export default function App() {
     }
   };
 
-  // FUNGSI SUPABASE: AMBIL DATA DIISI (JIKA TABEL DUKUNGAN TERSEDIA)
+  // FUNGSI SUPABASE: AMBIL DATA DIISI
   const fetchFilledRecordsFromDB = async () => {
     try {
       const startDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
@@ -516,12 +558,11 @@ export default function App() {
         setFilledRecords(prev => ({ ...prev, ...fetchedFilled }));
       }
     } catch (error) {
-      // Menggunakan fallback data dari penyimpanan lokal jika tabel tidak ada di Supabase
       console.warn('Gagal mengambil data filled_records dari Supabase (menggunakan cache lokal):', error);
     }
   };
 
-  // FUNGSI SUPABASE: SIMPAN ROTASI JADWAL OTOMATIS (MENYESUAIKAN KOLOM date_str)
+  // FUNGSI SUPABASE: SIMPAN ROTASI JADWAL OTOMATIS
   const generateAutoMonthSchedules = async () => {
     const days = getDaysInMonth(currentYear, currentMonth);
     const newSchedules = { ...schedules };
@@ -596,7 +637,6 @@ export default function App() {
 
     setSchedules(newSchedules);
 
-    // Upsert hasil rotasi ke Supabase menggunakan constraint unique_user_per_date (user_id, date_str)
     try {
       await supabase.from('schedules').upsert(recordsToInsert, { onConflict: 'user_id,date_str' });
     } catch (err) {
@@ -617,6 +657,7 @@ export default function App() {
     return () => clearInterval(timer);
   }, [currentUser, alarmEnabled, schedules]);
 
+  // INTEGRASI PEMERIKSAAN ALARM SHIFT (SISTEM IN-APP & LOCAL PUSH NOTIFICATIONS)
   const checkPersonalShiftAlarm = (now) => {
     if (currentUser.role === 'admin') return;
 
@@ -636,16 +677,24 @@ export default function App() {
     const alertHour = startHour === 7 ? 6 : 13;
     if (currentHour === alertHour && currentMin === 30 && currentSec === 0) {
       const info = getShiftDisplayInfo(shiftCode, todayStr);
+      
+      const judul = `Peringatan Shift Kerja ${currentUser.name}!`;
+      const pesan = `Halo ${currentUser.fullTitle}, jadwal Shift ${info.label} Anda akan dimulai dalam 30 menit. Mohon bersiap menuju Ruang Rekam Medis.`;
+
+      // Trigger modal in-app
       triggerAlarmModal({
-        title: `Peringatan Shift Kerja ${currentUser.name}!`,
-        message: `Halo ${currentUser.fullTitle}, jadwal Shift ${info.label} Anda akan dimulai dalam 30 menit. Mohon bersiap menuju Ruang Rekam Medis.`,
+        title: judul,
+        message: pesan,
         shiftCode,
         staffName: currentUser.name
       });
+
+      // Trigger Push Notification HP via @capacitor/local-notifications
+      buatAlarmPopUp(judul, pesan, new Date(Date.now() + 1000));
     }
   };
 
-  // FUNGSI SUPABASE: LOGIN (DENGAN MAYBESINGLE MENGHINDARI ERROR 406)
+  // FUNGSI SUPABASE: LOGIN
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setIsLoggingIn(true);
@@ -672,7 +721,6 @@ export default function App() {
           alert('Password/PIN yang Anda masukkan salah!');
         }
       } else {
-        // Fallback jika pengguna belum/tidak ada di database Supabase
         if (loginAccountType === 'admin') {
           if (inputPassword === 'admin123' || inputPassword === '123456') {
             setCurrentUser({ id: 'admin_rm', name: 'Kepala Rekam Medis', role: 'admin' });
@@ -697,7 +745,7 @@ export default function App() {
         const fullStaffData = REKAM_MEDIS_STAFF.find(s => s.id === selectedStaffId);
         setCurrentUser({ ...fullStaffData, role: 'employee' });
       }
-    } finally {
+    } {
       setIsLoggingIn(false);
     }
   };
@@ -710,7 +758,7 @@ export default function App() {
     localStorage.removeItem('rm_user_session');
   };
 
-  // FUNGSI SUPABASE: UPDATE SHIFT PER CELL (MENGGUNAKAN KOLOM date_str)
+  // FUNGSI SUPABASE: UPDATE SHIFT PER CELL
   const handleAssignShift = async (staffId, dateStr, shiftCode) => {
     try {
       const { error } = await supabase
@@ -757,12 +805,18 @@ export default function App() {
   };
 
   const handleTestAlarm = () => {
+    const judul = 'Tes Alarm Darurat Shift';
+    const pesan = `Alarm melengking terus-menerus diaktifkan! Anda akan menerima peringatan suara berulang ini 30 menit sebelum shift dimulai.`;
+
     triggerAlarmModal({
-      title: 'Tes Alarm Darurat Shift',
-      message: `Alarm melengking terus-menerus diaktifkan! Anda akan menerima peringatan suara berulang ini 30 menit sebelum shift dimulai.`,
+      title: judul,
+      message: pesan,
       shiftCode: 'P',
       staffName: currentUser ? currentUser.name : 'Staf Rekam Medis'
     });
+
+    // Panggil fungsi Local Notifications Capacitor untuk pengujian
+    buatAlarmPopUp(judul, pesan, new Date(Date.now() + 2000));
   };
 
   const triggerAlarmModal = (alarmData) => {
@@ -1267,7 +1321,6 @@ export default function App() {
                         </div>
                       </div>
                       
-                      {/* INFORMASI DIISI DI VIEW KARTU */}
                       <div 
                         onClick={() => {
                           if (currentUser.role === 'admin' || currentUser.id === staff.id) {
